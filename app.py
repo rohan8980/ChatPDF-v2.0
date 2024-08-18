@@ -14,6 +14,8 @@ from langchain_huggingface import HuggingFaceEmbeddings
 import streamlit as st
 import os
 
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 @st.cache_resource(ttl="1h", show_spinner='Processing File(s).') 
 def get_docs_from_files(files):
@@ -45,7 +47,6 @@ def get_llm(groq_api_key, model_name):
     llm=ChatGroq(groq_api_key=groq_api_key,model_name=model_name)
     return llm
     
-
 def get_rag_chain(vectorstore, llm):
     # Create standalone question from current question + chat history using create_history_aware_retriever
     retriever = vectorstore.as_retriever()    
@@ -89,36 +90,65 @@ def get_rag_chain(vectorstore, llm):
 
 
 def get_current_session():
-    return st.session_id
+    return st.session_state.session_id
 def get_new_session(session_id='default_chat'):
-    st.session_id = session_id
+    st.session_state.session_id = session_id
 def get_session_history(session_id:str)->BaseChatMessageHistory:
     session_id = get_current_session() if not session_id else session_id
     if session_id not in st.session_state.store:
         st.session_state.store[session_id]=ChatMessageHistory()
     return st.session_state.store[session_id]
+def start_new_chat():
+    new_session_id = f'chat_{len(st.session_state.store) + 1}'
+    get_new_session(new_session_id)
+    st.session_state.query = "" 
+    st.session_state.store[new_session_id] = ChatMessageHistory()
     
 def show_chat_history(session_id=None):
     st.markdown("""
         <style>
         .human-message {
             text-align: right;
-            background-color: #DCF8C6;
-            padding: 10px;
-            border-radius: 10px;
-            margin-bottom: 5px;
+            background: linear-gradient(135deg, #a8e063, #56ab2f);
+            padding: 14px;
+            border-radius: 20px 20px 0 20px;
+            margin-bottom: 12px;
+            box-shadow: 0px 5px 10px rgba(0, 0, 0, 0.15);
+            max-width: 65%;
+            margin-left: auto;
+            font-family: 'Roboto', sans-serif;
+            font-size: 15px;
+            color: #fff;
+            animation: fade-slide-in 0.4s ease;
         }
+
         .ai-message {
             text-align: left;
-            background-color: #F1F0F0;
-            padding: 10px;
-            border-radius: 10px;
-            margin-bottom: 5px;
+            background: linear-gradient(135deg, #f0f0f0, #cccccc);
+            padding: 14px;
+            border-radius: 20px 20px 20px 0;
+            margin-bottom: 12px;
+            box-shadow: 0px 5px 10px rgba(0, 0, 0, 0.15);
+            max-width: 65%;
+            margin-right: auto;
+            font-family: 'Roboto', sans-serif;
+            font-size: 15px;
+            color: #333;
+            animation: fade-slide-in 0.4s ease;
+        }
+
+        @keyframes fade-slide-in {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
         }
         </style>
-        """,
-        unsafe_allow_html=True
-    )
+        """, unsafe_allow_html=True)
 
     session_id = get_current_session() if not session_id else session_id
     chat_history = get_session_history(session_id).messages
@@ -129,6 +159,7 @@ def show_chat_history(session_id=None):
             st.markdown(f"<div class='human-message'>{message.content}</div>", unsafe_allow_html=True)
 
 
+
 # Env variables and global variables
 LLM_Model="Gemma2-9b-It"
 HF_Embed_Model = "all-MiniLM-L6-v2"
@@ -136,6 +167,14 @@ groq_api_key = st.secrets["GROQ_API_KEY"]
 
 if 'store' not in st.session_state:
     st.session_state.store={}
+    # st.session_state.store = {
+    #     'default_chat': ChatMessageHistory(
+    #         messages=[
+    #             HumanMessage(content='Fetch important list of dates from this document'),
+    #             AIMessage(content="Here are the important dates mentioned in the text:\n\n* **April 30, 2013:** ")
+    #         ]
+    #     )
+    # }
 if 'session_id' not in st.session_state:
     get_new_session()
 if 'query' not in st.session_state:
@@ -170,6 +209,11 @@ if files:
             conversational_rag_chain=RunnableWithMessageHistory(rag_chain, get_session_history, input_messages_key="input", history_messages_key="chat_history", output_messages_key="answer")
             response = conversational_rag_chain.invoke({"input": query}, config=config)
 
-        st.session_state.query_text_input=""
         with chat_placeholder.container():
             show_chat_history()
+
+        if st.button("New Chat"):
+            start_new_chat()
+            chat_placeholder.empty()
+
+        # st.write(st.session_state.store)
