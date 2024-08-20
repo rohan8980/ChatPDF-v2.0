@@ -91,7 +91,7 @@ def get_rag_chain(vectorstore, llm):
 
 def get_current_session():
     return st.session_state.session_id
-def get_new_session(session_id='default_chat'):
+def get_new_session(session_id='Chat 1'):
     st.session_state.session_id = session_id
 def get_session_history(session_id:str)->BaseChatMessageHistory:
     session_id = get_current_session() if not session_id else session_id
@@ -99,9 +99,8 @@ def get_session_history(session_id:str)->BaseChatMessageHistory:
         st.session_state.store[session_id]=ChatMessageHistory()
     return st.session_state.store[session_id]
 def start_new_chat():
-    new_session_id = f'chat_{len(st.session_state.store) + 1}'
+    new_session_id = f'Chat {len(st.session_state.store) + 1}'
     get_new_session(new_session_id)
-    st.session_state.query = "" 
     st.session_state.store[new_session_id] = ChatMessageHistory()
     
 def show_chat_history(session_id=None):
@@ -167,53 +166,66 @@ groq_api_key = st.secrets["GROQ_API_KEY"]
 
 if 'store' not in st.session_state:
     st.session_state.store={}
-    # st.session_state.store = {
-    #     'default_chat': ChatMessageHistory(
-    #         messages=[
-    #             HumanMessage(content='Fetch important list of dates from this document'),
-    #             AIMessage(content="Here are the important dates mentioned in the text:\n\n* **April 30, 2013:** ")
-    #         ]
-    #     )
-    # }
 if 'session_id' not in st.session_state:
     get_new_session()
 if 'query' not in st.session_state:
     st.session_state.query="" 
+if 'is_history_available' not in st.session_state:
+    st.session_state.is_history_available = False  
+
 
 # Streamlit UI
+# Utility functions
+def clear_input(): #Clears the input field to avoid rerunning with same query twice
+        st.session_state.query=st.session_state.text_input
+        st.session_state.text_input=""
+def set_history_session_id(): #Update session_id to fetch older chats
+    st.session_state.session_id = st.session_state.older_chat_id
+
+
+# UI
 st.title("Chat PDF with Chat History")
 st.write(f'<p style="font-size: medium">Chat with PDF using Langchain HuggingFace Groq</p>', unsafe_allow_html=True)
 
-
+# Files upload and Text input bar
 files=st.file_uploader('Choose PDF file(s)', type=['pdf'], accept_multiple_files=True)
 if files:
     # Prepare rag_chain from uploaded files
     vectorstore = get_vectorstore_from_files(files=files, HF_Embed_Model=HF_Embed_Model)
     llm_model = get_llm(groq_api_key=groq_api_key,model_name=LLM_Model)
-    rag_chain = get_rag_chain(vectorstore, llm_model)
+    rag_chain = get_rag_chain(vectorstore, llm_model) 
 
-    # Chat history
+    # Chat history container
     chat_placeholder = st.empty()
     with chat_placeholder.container():
         show_chat_history()
-    def clear_input():
-        st.session_state.query=st.session_state.text_input
-        st.session_state.text_input=""
 
-    # Loading response for input query
+    # Taking user Query and getting answer from LLM
     st.text_input(placeholder="Ask your question here", label="Question", label_visibility="collapsed", key='text_input', on_change=clear_input)
-    query = st.session_state.query
-    if query:
+    if st.session_state.query:
         with st.spinner('Searching...'):
             config = {"configurable": {"session_id":get_current_session()}}
             conversational_rag_chain=RunnableWithMessageHistory(rag_chain, get_session_history, input_messages_key="input", history_messages_key="chat_history", output_messages_key="answer")
-            response = conversational_rag_chain.invoke({"input": query}, config=config)
+            response = conversational_rag_chain.invoke({"input": st.session_state.query}, config=config)
+        st.session_state.query = ""
+        st.session_state.is_history_available = True
 
-        with chat_placeholder.container():
-            show_chat_history()
+    with chat_placeholder.container():
+        show_chat_history()
 
+# New Chat and Older Chats buttons    
+if st.session_state.is_history_available:
+        
+    col1, col2, col3, col4 = st.columns(spec=[1, 1, 2, 2])
+    with col1:
         if st.button("New Chat"):
-            start_new_chat()
+            start_new_chat()    
             chat_placeholder.empty()
-
-        # st.write(st.session_state.store)
+    with col2:
+        if st.button("Older Chats"): 
+            sessions = list(st.session_state.store.keys())[::-1]
+            index = sessions.index(st.session_state.session_id)
+            with col3:
+                st.selectbox(label="Choose a chat", options=sessions, index=index, key = "older_chat_id", on_change=set_history_session_id, label_visibility="collapsed")
+                with chat_placeholder.container():
+                    show_chat_history()
